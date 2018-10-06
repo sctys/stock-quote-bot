@@ -14,6 +14,8 @@ class StockScrapper(object):
         self.us_stock_url = ['https://www.nasdaq.com/en/symbol/', '/real-time']
         self.forex_url = ['http://forex.1forge.com/1.0.3/quotes?pairs=', '&api_key=']
         self.__one_forge_api = os.environ['ONEFORGE_API']
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
         logger_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -71,7 +73,6 @@ class StockScrapper(object):
             count += 1
         return None
 
-
     async def hk_stock_scrapper(self, symbol):
         url = self.hk_stock_url + str(symbol)
         page, soup = await self.html_page_load(url, 'table.quote_table')
@@ -119,12 +120,11 @@ class StockScrapper(object):
         hksymbols = [str(x) for x in symbols if str(x).isdigit()]
         ussymbols = [str(x) for x in symbols if not str(x).isdigit() and '/' not in str(x)]
         forex_symbols = [str(x) for x in symbols if not str(x).isdigit() and '/' in str(x)]
-        loop = asyncio.get_event_loop()
         tasks = [asyncio.ensure_future(self.hk_stock_scrapper(x)) for x in hksymbols] + [
                 asyncio.ensure_future(self.us_stock_scrapper(x)) for x in ussymbols]
         api_task = [asyncio.ensure_future(self.forex_api(forex_symbols))] if len(forex_symbols) > 0 else []
         tasks += api_task
-        quotes = loop.run_until_complete(asyncio.gather(*tasks))
+        quotes = self.loop.run_until_complete(asyncio.gather(*tasks))
         quotes = [[x] if not isinstance(x, list) else x for x in quotes]
         quotes = [y for x in quotes for y in x]
         return quotes

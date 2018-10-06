@@ -19,3 +19,4 @@ vendored/
 
 # Serverless directories
 .serverless
+*.log
