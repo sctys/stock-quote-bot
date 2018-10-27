@@ -15,7 +15,6 @@ class StockScrapper(object):
         self.forex_url = ['http://forex.1forge.com/1.0.3/quotes?pairs=', '&api_key=']
         self.__one_forge_api = os.environ['ONEFORGE_API']
         self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
         logger_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -116,15 +115,13 @@ class StockScrapper(object):
                  [list(x.keys())[0] for x in quotes], [list(x.values())[0] for x in quotes]))
         return [{list(x.keys())[0]: list(x.values())[0]} for x in quotes]
 
-    def report_quote(self, symbols):
+    async def report_quote(self, symbols):
         hksymbols = [str(x) for x in symbols if str(x).isdigit()]
         ussymbols = [str(x) for x in symbols if not str(x).isdigit() and '/' not in str(x)]
         forex_symbols = [str(x) for x in symbols if not str(x).isdigit() and '/' in str(x)]
-        tasks = [asyncio.ensure_future(self.hk_stock_scrapper(x)) for x in hksymbols] + [
-                asyncio.ensure_future(self.us_stock_scrapper(x)) for x in ussymbols]
-        api_task = [asyncio.ensure_future(self.forex_api(forex_symbols))] if len(forex_symbols) > 0 else []
-        tasks += api_task
-        quotes = self.loop.run_until_complete(asyncio.gather(*tasks))
+        quotes = [await self.hk_stock_scrapper(x) for x in hksymbols] + [
+                  await self.us_stock_scrapper(x) for x in ussymbols] + \
+            ([await self.forex_api(forex_symbols)] if len(forex_symbols) > 0 else [])
         quotes = [[x] if not isinstance(x, list) else x for x in quotes]
         quotes = [y for x in quotes for y in x]
         return quotes
@@ -132,8 +129,8 @@ class StockScrapper(object):
 
 def main():
     stock = StockScrapper()
-    quotes = stock.report_quote([3, 10, 700, 2318, 'AAPL', 'AMZN', 'NVDA', 'EUR/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD',
-                                 'BTC/ETH'])
+    quotes = stock.loop.run_until_complete(stock.report_quote([3, 10, 700, 2318, 'AAPL', 'AMZN', 'NVDA', 'EUR/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD',
+                                 'BTC/ETH']))
     # quotes = stock.report_quote([3, 10, 700, 2318, 'AAPL', 'AMZN', 'NVDA'])
     print(quotes)
 

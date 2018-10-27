@@ -4,6 +4,7 @@ import os
 import logging
 import json
 from stock_scrapper import StockScrapper
+from db import *
 from logging.handlers import TimedRotatingFileHandler
 
 
@@ -19,7 +20,6 @@ class TelegramBot(object):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
         self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
         logger_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         filelog = TimedRotatingFileHandler('stock_quote_bot.log', when='D', interval=7, backupCount=1)
         filelog.setFormatter(logger_formatter)
@@ -114,8 +114,12 @@ class TelegramBot(object):
         elif '/position' in msg_text:
             if '/add' in msg_text:
                 message_type = 'position_add'
-            elif '/manage' in msg_text:
-                message_type = 'position_manage'
+            elif '/list' in msg_text:
+                message_type = 'position_list'
+            elif '/view' in msg_text:
+                message_type = 'position_view'
+            elif '/remove' in msg_text:
+                message_type = 'position_remove'
             else:
                 message_type = None
         elif '/notification' in msg_text:
@@ -133,36 +137,34 @@ class TelegramBot(object):
 
     @staticmethod
     def check_watchlist(user_id):
-        watchlist = Watchlist.objects(createdBy=user_id)
+        users = User.objects(telegramUid=user_id)
+        watchlist = Watchlist.objects(createdBy=users[0].id)
         if len(watchlist) > 0:
-            return watchlist[0].symbol
+            return watchlist[0].stockSymbols
         else:
             return None
 
     @staticmethod
     def check_nickname(user_id, query):
-        stock = Stock.objects(Q(nickname=query) & Q(createdBy=user_id))
+        users = User.objects(telegramUid=user_id)
+        stock = Stock.objects(Q(nickname=query) & Q(createdBy=users[0].id))
         if len(stock) > 0:
             return stock[0].symbol
         else:
-            return []
+            return query
 
     async def ask_price(self, message):
         msg_text = message['text']
         user_id = message['from']['id']
-        query_token = msg_text.replace('/ask/price ')
-        # Check if the query_token is watch_list for user
-        # If yes, get list of symbol from watch_list
-        query = self.check_watchlist(user_id)
-        if len(query) == 0:
-            query = query_token.split(',').trim()
-        # Check if the query_token is nick_name for user
-        # If yes, get symbol from nick_name
-        # Else, treat query directly as symbol
+        query_token = msg_text.replace('/ask/price ', '')
+        if len(query_token) == 0:
+            query = self.check_watchlist(user_id)
+        else:
+            query = query_token.split(',')
+            query = [x.strip() for x in query]
         symbol = [self.check_nickname(user_id, x) for x in query]
         symbol_dict = {x: y for x, y in zip(symbol, query)}
-        asyncio.set_event_loop(self.scrapper.loop)
-        quotes = self.scrapper.report_quote(symbol)
+        quotes = await self.scrapper.report_quote(symbol)
         response = '\n'.join(['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes])
         await self.send_message(response, user_id)
 
@@ -181,47 +183,96 @@ class TelegramBot(object):
     async def nickname_add(self, message):
         msg_text = message['text']
         user_id = message['from']['id']
-        query_token = msg_text.replace('/nickname/add ')
+        query_token = msg_text.replace('/nickname/add ', '')
         symbol, nickname = query_token.split(' ')
         market = self.market_classification(symbol)
-        Stock(symbol=symbol, nickname=nickname, createdBy=user_id, market=market).save()
+        users = User.objects(telegramUid=user_id)
+        Stock(symbol=symbol, nickname=nickname, createdBy=users[0].id, market=market).save()
         response = 'New entry added:\nSymbol: %s, NickName: %s, Market: %s' % (symbol, nickname, market)
         await self.send_message(response, user_id)
 
     async def nickname_remove(self, message):
         msg_text = message['text']
         user_id = message['from']['id']
-        query_token = msg_text.replace('/nickname/remove ').trim()
-        Stock.objects(Q(createdBy=user_id) & (Q(symbol=query_token) | Q(nickname=query_token))).delete()
+        query_token = msg_text.replace('/nickname/remove ', '').strip()
+        users = User.objects(telegramUid=user_id)
+        Stock.objects(Q(createdBy=users[0].id) & (Q(symbol=query_token) | Q(nickname=query_token))).delete()
         response = 'Entry removed: %s' % query_token
         await self.send_message(response, user_id)
 
     async def watchlist_add(self, message):
         msg_text = message['text']
         user_id = message['from']['id']
-        query_token = msg_text.replace('/watchlist/add ').trim()
+        query_token = msg_text.replace('/watchlist/add ', '')
         new_symbol_list = query_token.split(',')
+        new_symbol_list = [x.strip() for x in new_symbol_list]
         old_symbol_list = self.check_watchlist(user_id)
-        symbol_list = old_symbol_list + new_symbol_list
-        Watchlist(createdBy=user_id, stockSymbols=symbol_list).save()
+        symbol_list = list(set(old_symbol_list + new_symbol_list))
+        users = User.objects(telegramUid=user_id)
+        Watchlist.objects(createdBy=users[0].id).delete()
+        Watchlist(createdBy=users[0].id, stockSymbols=symbol_list).save()
         response = 'Watchlist added with symbols:\n%s' % ', '.join(new_symbol_list)
         await self.send_message(response, user_id)
 
     async def watchlist_remove(self, message):
         msg_text = message['text']
         user_id = message['from']['id']
-        query_token = msg_text.replace('/watchlist/remove ').trim()
+        query_token = msg_text.replace('/watchlist/remove ', '')
         del_symbol_list = query_token.split(',')
+        del_symbol_list = [x.strip() for x in del_symbol_list]
         old_symbol_list = self.check_watchlist(user_id)
         symbol_list = [x for x in old_symbol_list if x not in del_symbol_list]
-        Watchlist(createdBy=user_id, stockSymbols=symbol_list).save()
+        users = User.objects(telegramUid=user_id)
+        Watchlist.objects(createdBy=users[0].id).delete()
+        Watchlist(createdBy=users[0].id, stockSymbols=symbol_list).save()
         response = 'Watchlist removed the symbols:\n%s' % ', '.join(del_symbol_list)
         await self.send_message(response, user_id)
 
     async def position_add(self, message):
         msg_text = message['text']
         user_id = message['from']['id']
-        query_token = msg_text.replace('/position/add ').trim()
+        query_token = msg_text.replace('/position/add ', '')
+        symbol, buyprice, buyunit = query_token.split(' ')
+        symbol = symbol.strip()
+        buyprice = buyprice.strip()
+        buyunit = buyunit.strip()
+        users = User.objects(telegramUid=user_id)
+        stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=symbol))
+        if len(stock) == 0:
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=symbol))
+        Position(createdBy=users[0].id, stock=stock[0].id, unitPrice=buyprice, quantity=buyunit).save()
+        response = 'Position added for %s, unit price = %s, quantity = %s' % (stock[0].symbol, buyprice, buyunit)
+        await self.send_message(response, user_id)
+
+    async def position_list(self, message):
+        user_id = message['from']['id']
+        users = User.objects(telegramUid=user_id)
+        position = Position.objects(createdBy=users[0].id)
+        position = ['Symbol: %s, Nickname: %s, unit price: %s, quantity: %s' % (
+            x.stock.symbol, x.stock.nickname, x.unitPrice, x.quantity) for x in position]
+        response = '\n'.join(position)
+        await self.send_message(response, user_id)
+
+    async def position_view(self, message):
+        msg_text = message['text']
+        user_id = message['from']['id']
+        query_token = msg_text.replace('/position/view ', '')
+        query = query_token.strip()
+        users = User.objects(telegramUid=user_id)
+        stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=query))
+        if len(stock) == 0:
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
+        position = Position.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id))
+        old_price = position.unitPrice
+        quantity = Position.quantity
+        new_price = await self.scrapper.report_quote(list(stock.symbol))[0][stock.symbol].split(',')[0]
+        profit = (float(new_price) - float(old_price)) * quantity
+        percent_profit = str((float(new_price) / float(old_price) - 1) * 100) + '%'
+        response = 'Profit = %s, Percent profit = %s' % (profit, percent_profit)
+        await self.send_message(response, user_id)
+
+
+
 
 
 
@@ -236,6 +287,9 @@ class TelegramBot(object):
 def main():
     tg_bot = TelegramBot()
     print(tg_bot.loop.run_until_complete(tg_bot.get_message()))
+    # print(tg_bot.check_watchlist(263664408))
+    # asyncio.set_event_loop(tg_bot.loop)
+    print(tg_bot.loop.run_until_complete(tg_bot.watchlist_remove({'message_id': 29, 'from': {'id': 263664408, 'is_bot': False, 'first_name': 'SCTYS', 'username': 'sctys', 'language_code': 'en-US'}, 'chat': {'id': 263664408, 'first_name': 'SCTYS', 'username': 'sctys', 'type': 'private'}, 'date': 1540632514, 'text': '/watchlist/remove 66, 821'})))
 
 
 if __name__ == '__main__':

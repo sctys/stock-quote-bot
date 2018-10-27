@@ -4,8 +4,7 @@ from mongoengine import *
 connect(host=os.environ['DB_CONN'])
 
 class User(Document):
-    # telegram user id
-    _id = IntField()
+    telegramUid = IntField(unique=True)
     name = StringField()
     meta = {
         'collection': 'users'
