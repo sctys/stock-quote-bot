@@ -139,7 +139,47 @@ class TelegramBot(object):
                 message_type = None
         elif '/notification' in msg_text:
             if '/manage' in msg_text:
-                message_type = 'notification_manage'
+                if '/price-movement-percentage' in msg_text:
+                    if '/list' in msg_text:
+                        message_type = 'notification_manage_price_movement_percentage_list'
+                    elif 'view' in msg_text:
+                        message_type = 'notification_manage_price_movement_percentage_view'
+                    elif 'add' in msg_text:
+                        message_type = 'notification_manage_price_movement_percentage_add'
+                    elif 'update' in msg_text:
+                        message_type = 'notification_manage_price_movement_percentage_update'
+                    elif 'remove' in msg_text:
+                        message_type = 'notification_manage_price_movement_percentage_remove'
+                    else:
+                        message_type = None
+                elif '/sl' in msg_text:
+                    if '/list' in msg_text:
+                        message_type = 'notification_manage_sl_list'
+                    elif '/view' in msg_text:
+                        message_type = 'notification_manage_sl_view'
+                    elif '/add' in msg_text:
+                        message_type = 'notification_manage_sl_add'
+                    elif '/update' in msg_text:
+                        message_type = 'notification_manage_sl_update'
+                    elif '/remove' in msg_text:
+                        message_type = 'notification_manage_sl_remove'
+                    else:
+                        message_type = None
+                elif '/tp' in msg_text:
+                    if '/list' in msg_text:
+                        message_type = 'notification_manage_tp_list'
+                    elif '/view' in msg_text:
+                        message_type = 'notification_manage_tp_view'
+                    elif '/add' in msg_text:
+                        message_type = 'notification_manage_tp_add'
+                    elif '/update' in msg_text:
+                        message_type = 'notification_manage_tp_update'
+                    elif '/remove' in msg_text:
+                        message_type = 'notification_manage_tp_remove'
+                    else:
+                        message_type = None
+                else:
+                    message_type = None
             elif '/disable' in msg_text:
                 message_type = 'notification_disable'
             elif '/enable' in msg_text:
@@ -249,8 +289,8 @@ class TelegramBot(object):
         query_token = msg_text.replace('/position/add ', '')
         symbol, buyprice, buyunit = query_token.split(' ')
         symbol = symbol.strip()
-        buyprice = buyprice.strip()
-        buyunit = buyunit.strip()
+        buyprice = float(buyprice.strip())
+        buyunit = float(buyunit.strip())
         users = User.objects(telegramUid=user_id)
         stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=symbol))
         if len(stock) == 0:
@@ -286,17 +326,133 @@ class TelegramBot(object):
         response = 'Profit = %s, Percent profit = %s' % (profit, percent_profit)
         await self.send_message(response, user_id)
 
+    async def position_remove(self, message):
+        msg_text = message['text']
+        user_id = message['from']['id']
+        query_token = msg_text.replace('/position/remove ', '')
+        query = query_token.strip()
+        users = User.objects(telegramUid=user_id)
+        stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=query))
+        if len(stock) == 0:
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
+        Position.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id)).delete()
+        response = 'Position removed for %s' % stock[0].symbol
+        await self.send_message(response, user_id)
 
+    async def notification_manage_list(self, message, method):
+        user_id = message['from']['id']
+        users = User.objects(telegramUid=user_id)
+        notification = NotificationSetting.objects(Q(createdBy=users[0].id) & Q(type=method) & Q(enabled=True))
+        notification = ['Symbol: %s, Nickname: %s, Threshold: %s, Type: %s' % (
+            x.stock.symbol, x.stock.nickname, x.threshold, x.type) for x in notification]
+        response = '\n'.join(notification)
+        await self.send_message(response, user_id)
 
+    async def notification_manage_price_movement_percentage_list(self, message):
+        await self.notification_manage_list(message, 'priceChange')
 
+    async def notification_manage_sl_list(self, message):
+        await self.notification_manage_list(message, 'sl')
 
+    async def notification_manage_tp_list(self, message):
+        await self.notification_manage_list(message, 'tp')
 
+    async def notification_manage_view(self, message, method):
+        msg_text = message['text']
+        user_id = message['from']['id']
+        method_dict = {'priceChange': 'price-movement-percentage', 'sl': 'sl', 'tp': 'tp'}
+        replace_text = '/notification/manage/%s/view ' % method_dict[method]
+        query_token = msg_text.replace(replace_text, '')
+        query = query_token.strip()
+        users = User.objects(telegramUid=user_id)
+        stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=query))
+        if len(stock) == 0:
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
+        notification = NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(
+            type=method) & Q(enabled=True))
+        response = 'Symbol: %s, Nickname: %s, Threshold: %s, Type: %s' % (
+            notification[0].stock.symbol, notification[0].stock.nickname, notification[0].threshold,
+            notification[0].type)
+        await self.send_message(response, user_id)
 
+    async def notification_manage_price_movement_percentage_view(self, message):
+        await self.notification_manage_view(message, 'priceChange')
 
+    async def notification_manage_sl_view(self, message):
+        await self.notification_manage_view(message, 'sl')
 
+    async def notification_manage_tp_view(self, message):
+        await self.notification_manage_view(message, 'tp')
 
+    async def notification_manage_add(self, message, method):
+        msg_text = message['text']
+        user_id = message['from']['id']
+        method_dict = {'priceChange': 'price-movement-percentage', 'sl': 'sl', 'tp': 'tp'}
+        replace_text = '/notification/manage/%s/add ' % method_dict[method]
+        query_token = msg_text.replace(replace_text, '')
+        query, threshold = query_token.split(' ')
+        query = query.strip()
+        threshold = threshold.strip()
+        if '%' in threshold:
+            threshold = float(threshold.replace('%', '')) / 100
+        else:
+            threshold = float(threshold)
+        users = User.objects(telegramUid=user_id)
+        stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=query))
+        if len(stock) == 0:
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
+        NotificationSetting(createdBy=users[0].id, stock=stock[0].id, type=method, threshold=threshold,
+                            enabled=True).save()
+        response = 'Notification added:\nSymbol: %s, Nickname: %s, Threshold: %s, Type: %s' % (
+            stock[0].symbol, stock[0].nickname, threshold, method)
+        await self.send_message(response, user_id)
 
+    async def notification_manage_price_movement_percentage_add(self, message):
+        await self.notification_manage_add(message, 'priceChange')
 
+    async def notification_manage_sl_add(self, message):
+        await self.notification_manage_add(message, 'sl')
+
+    async def notification_manage_tp_add(self, message):
+        await self.notification_manage_add(message, 'tp')
+
+    async def notification_manage_remove(self, message, method):
+        msg_text = message['text']
+        user_id = message['from']['id']
+        method_dict = {'priceChange': 'price-movement-percentage', 'sl': 'sl', 'tp': 'tp'}
+        replace_text = '/notification/manage/%s/remove ' % method_dict[method]
+        query_token = msg_text.replace(replace_text, '')
+        query = query_token.strip()
+        users = User.objects(telegramUid=user_id)
+        stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=query))
+        if len(stock) == 0:
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
+        NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(type=method)).update(
+            enabled=False)
+        response = 'Notification removed for symbol %s of type %s' % (stock[0].symbol, method)
+        await self.send_message(response, user_id)
+
+    async def notification_manage_price_movement_percentage_remove(self, message):
+        await self.notification_manage_remove(message, 'priceChange')
+
+    async def notification_manage_sl_remove(self, message):
+        await self.notification_manage_remove(message, 'sl')
+
+    async def notification_manage_tp_remove(self, message):
+        await self.notification_manage_remove(message, 'tp')
+
+    async def notification_switch(self, message, enable):
+        user_id = message['from']['id']
+        users = User.objects(telegramUid=user_id)
+        UserSettings.objects(createdBy=users[0].id).update(notificationEnable=enable)
+        response = 'Notification %s' % ('enabled' if enable else 'disabled')
+        await self.send_message(response, user_id)
+
+    async def notification_enable(self, message):
+        await self.notification_switch(message, True)
+
+    async def notification_disable(self, message):
+        await self.notification_switch(message, False)
 
 
 def main():
@@ -311,6 +467,11 @@ def main():
     # print(tg_bot.loop.run_until_complete(
     #     tg_bot.watchlist_remove({'message_id': 29, 'from': {'id': 189497538, 'is_bot': False, 'first_name': 'SCTYS', 'username': 'sctys', 'language_code': 'en-US'}, 'chat': {'id': 189497538, 'first_name': 'SCTYS', 'username': 'sctys', 'type': 'private'}, 'date': 1540632514, 'text': '/watchlist/remove 66, 821'})
     #     ))
+    # print(tg_bot.loop.run_until_complete(tg_bot.get_message()))
+    # tg_bot.loop.run_until_complete()
+    # print(tg_bot.check_watchlist(263664408))
+    # asyncio.set_event_loop(tg_bot.loop)
+    print(tg_bot.loop.run_until_complete(tg_bot.notification_disable({'message_id': 29, 'from': {'id': 263664408, 'is_bot': False, 'first_name': 'SCTYS', 'username': 'sctys', 'language_code': 'en-US'}, 'chat': {'id': 263664408, 'first_name': 'SCTYS', 'username': 'sctys', 'type': 'private'}, 'date': 1540632514, 'text': '/notification/disable'})))
 
 
 if __name__ == '__main__':
