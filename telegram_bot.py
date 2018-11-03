@@ -6,11 +6,14 @@ import json
 from stock_scrapper import StockScrapper
 from db import *
 from logging.handlers import TimedRotatingFileHandler
-
+import telegram
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
 class TelegramBot(object):
 
     def __init__(self):
+        self.updater = Updater(token=os.environ['TELEGRAM_TOKEN'])
+        self.dispatcher = self.updater.dispatcher
         self.__token = os.environ['TELEGRAM_TOKEN']
         self.endpoint = 'https://api.telegram.org/bot%s' % self.__token
         self.get_message_url = '/getUpdates'
@@ -92,6 +95,18 @@ class TelegramBot(object):
         url = self.endpoint + self.send_message_url
         params = {'chat_id': user_id, 'text': content}
         await self.telegram_url(url, params)
+
+    # Default helper message response.
+    def help_message_handler(self, bot, update):
+        response = 'Support commands: \n /ask_price'
+        bot.send_message(chat_id=update.message.chat_id, text=response)
+
+    def setup_handler(self):
+        self.dispatcher.add_handler(MessageHandler(Filters.text, self.help_message_handler))
+        self.dispatcher.add_handler(CommandHandler(
+            'ask_price',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.ask_price(bot, update, args)),
+            pass_args=True))
 
     async def message_classification(self, message):
         msg_text = message['text']
@@ -193,10 +208,10 @@ class TelegramBot(object):
         else:
             return query
 
-    async def ask_price(self, message):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        query_token = msg_text.replace('/ask/price ', '')
+    async def ask_price(self, bot, update, args):
+        user_id = update.message.from_user.id
+        query_token = ' '.join(args)
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
         if len(query_token) == 0:
             query = self.check_watchlist(user_id)
         else:
@@ -206,7 +221,7 @@ class TelegramBot(object):
         symbol_dict = {x: y for x, y in zip(symbol, query)}
         quotes = await self.scrapper.report_quote(symbol)
         response = '\n'.join(['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes])
-        await self.send_message(response, user_id)
+        bot.send_message(chat_id=update.message.chat_id, text=response)
 
     @staticmethod
     def market_classification(symbol):
@@ -442,6 +457,16 @@ class TelegramBot(object):
 
 def main():
     tg_bot = TelegramBot()
+    tg_bot.setup_handler()
+    tg_bot.updater.start_polling()
+    # print(tg_bot.loop.run_until_complete(tg_bot.get_message()))
+    # print(tg_bot.loop.run_until_complete(tg_bot.get_unprocessed_message()))
+    # print(tg_bot.loop.run_until_complete(tg_bot.send_message('Testing', 189497538)))
+    # print(tg_bot.check_watchlist(189497538))
+    # asyncio.set_event_loop(tg_bot.loop)
+    # print(tg_bot.loop.run_until_complete(
+    #     tg_bot.watchlist_remove({'message_id': 29, 'from': {'id': 189497538, 'is_bot': False, 'first_name': 'SCTYS', 'username': 'sctys', 'language_code': 'en-US'}, 'chat': {'id': 189497538, 'first_name': 'SCTYS', 'username': 'sctys', 'type': 'private'}, 'date': 1540632514, 'text': '/watchlist/remove 66, 821'})
+    #     ))
     # print(tg_bot.loop.run_until_complete(tg_bot.get_message()))
     # tg_bot.loop.run_until_complete()
     # print(tg_bot.check_watchlist(263664408))
