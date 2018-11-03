@@ -5,6 +5,7 @@ import os
 import json
 from logging.handlers import TimedRotatingFileHandler
 from bs4 import BeautifulSoup
+from db import *
 
 
 class StockScrapper(object):
@@ -24,6 +25,7 @@ class StockScrapper(object):
         stdlog = logging.StreamHandler()
         stdlog.setFormatter(logger_formatter)
         self.logger.addHandler(stdlog)
+        self.notification_message = []
 
     async def html_page_load(self, url, check_token):
         count = 0
@@ -125,6 +127,34 @@ class StockScrapper(object):
         quotes = [[x] if not isinstance(x, list) else x for x in quotes]
         quotes = [y for x in quotes for y in x]
         return quotes
+
+    def get_notification(self):
+        notification = NotificationSetting.objects(enabled=True)
+        notification = list(map(lambda x: {'user_id': x.createdBy.telegramUid, 'symbol': x.stock.symbol, 'type': x.type,
+                                           'threshold': x.threshold}, notification))
+        return notification
+
+    def price_change_notification(self, quote, notification):
+        if ',' in quote:
+            percentage_change = abs(float(quote.split('(')[-1].split('%', 0)) / 100)
+            if percentage_change > notification['threshold']:
+                self.notification_message += {'user_id': notification['user_id'],
+                                              'message': 'Price change percentage for %s reached.' %
+                                                         notification['symbol']}
+                users = User.objects(telegramUid=notification['user_id'])
+                stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
+                NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id))
+
+
+
+    async def loop_check_notification(self):
+        while True:
+            notification = self.get_notification()
+            symbols = [x['symbol'] for x in notification]
+            quotes = await self.report_quote(symbols)
+
+
+
 
 
 def main():
