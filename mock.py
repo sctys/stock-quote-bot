@@ -33,8 +33,9 @@ for user in User.objects(telegramUid=263664408):
 
     aNotificationSetting = NotificationSetting(
         createdBy=user.id,
-        stockSymbol="GOOG",
+        stock=aStock,
         threshold=1100,
-        type="sl"
+        type="sl",
+        enabled=True
     )
     aNotificationSetting.save()

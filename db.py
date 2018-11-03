@@ -57,13 +57,11 @@ class Position(Document):
 
 class NotificationSetting(Document):
     createdBy = ReferenceField(User)
-    stockSymbol = StringField()
+    stock = ReferenceField(Stock)
     threshold = DecimalField()
     type = StringField(choices=('sl', 'tp', 'priceChange'))
+    enabled = BooleanField()
     v = IntField(db_field='__v')
     meta = {
-        'collection': 'notificationsettings',
-        'indexes': [
-            'stockSymbol'
-        ]
+        'collection': 'notificationsettings'
     }
