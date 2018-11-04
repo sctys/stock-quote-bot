@@ -260,22 +260,27 @@ class TelegramBot(object):
         bot.send_message(chat_id=update.message.chat_id, text=response)
 
     @staticmethod
-    def market_classification(symbol, showIcon):
-        marketIcon = ''
+    def market_classification(symbol):
         if str(symbol).isdigit():
             market = 'hk'
-            marketIcon = '🇭🇰'
         elif not str(symbol).isdigit() and '/' not in str(symbol):
             market = 'us'
-            marketIcon = '🇺🇸'
         elif not str(symbol).isdigit() and '/' in str(symbol):
             market = 'forex'
         else:
             market = 'unknonwn'
-        if (showIcon):
-            return market + ' ' + marketIcon
-        else:
-            return market
+        return market
+
+    @staticmethod
+    def market_icon(symbol):
+        market_icon = ''
+        if str(symbol).isdigit():
+            market_icon = '🇭🇰'
+        elif not str(symbol).isdigit() and '/' not in str(symbol):
+            market_icon = '🇺🇸'
+        elif not str(symbol).isdigit() and '/' in str(symbol):
+            market_icon = ''
+        return market_icon
 
     async def nickname_add(self, bot, update, args):
         user_id = update.message.from_user.id
@@ -284,8 +289,8 @@ class TelegramBot(object):
         market = self.market_classification(symbol)
         users = User.objects(telegramUid=user_id)
         Stock(symbol=symbol, nickname=nickname, createdBy=users[0].id, market=market).save()
-        marketIcon = self.market_classification(symbol, True)
-        response = 'New entry added:\nSymbol: %s, NickName: %s, Market: %s' % (symbol, nickname, marketIcon)
+        market_icon = self.market_icon(symbol)
+        response = 'New entry added:\nSymbol: %s, NickName: %s, Market: %s%s' % (symbol, nickname, market, market_icon)
         bot.send_message(chat_id=update.message.chat_id, text=response)
 
     async def nickname_remove(self, bot, update, args):
