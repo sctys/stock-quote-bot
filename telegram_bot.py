@@ -7,7 +7,7 @@ from stock_scrapper import StockScrapper
 from db import *
 from logging.handlers import TimedRotatingFileHandler
 import telegram
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
 
 class TelegramBot(object):
 
@@ -98,8 +98,17 @@ class TelegramBot(object):
 
     # Default helper message response.
     def help_message_handler(self, bot, update):
-        response = 'Support commands: \n /ask_price'
-        bot.send_message(chat_id=update.message.chat_id, text=response)
+        response = '\n'.join([
+            'Support commands:',
+            '`/ask_price nickname|symbol` - Ask price for a stock with symbol or nickname.',
+            '`/nickname_add symbol nickname` - Assign a nickname to the stock.',
+            '`/nickname_remove symbol|nickname` - Remove a nickname.',
+            '`/nickname` - List of defined nicknames.',
+            '`/watchlist_add symbol|nickname` - Add an item to watchlist.',
+            '`/watchlist_remove symbol|nickname` - Remove an item to watchlist.',
+        ])
+        reply_markup = telegram.ReplyKeyboardRemove(remove_keyboard=True)
+        bot.send_message(chat_id=update.message.chat_id, text=response, parse_mode=telegram.ParseMode.MARKDOWN,reply_markup=reply_markup)
 
     def setup_handler(self):
         self.dispatcher.add_handler(MessageHandler(Filters.text, self.help_message_handler))
@@ -107,6 +116,27 @@ class TelegramBot(object):
             'ask_price',
             callback=lambda bot, update, args: self.loop.run_until_complete(self.ask_price(bot, update, args)),
             pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'nickname_add',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.nickname_add(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'nickname_remove',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.nickname_remove(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'nickname',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.nickname_list(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'watchlist_add',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.watchlist_add(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'watchlist_remove',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.watchlist_remove(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CallbackQueryHandler(callback=self.callback_query_response))
 
     async def message_classification(self, message):
         msg_text = message['text']
@@ -221,58 +251,107 @@ class TelegramBot(object):
         symbol_dict = {x: y for x, y in zip(symbol, query)}
         quotes = await self.scrapper.report_quote(symbol)
         response = '\n'.join(['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes])
+        is_increase = response.find('+') > 0
+        is_decrease = response.find('-') > 0
+        if is_increase:
+            response = '📈 ' + response
+        elif is_decrease:
+            response = '📉 ' + response
         bot.send_message(chat_id=update.message.chat_id, text=response)
 
     @staticmethod
-    def market_classification(symbol):
+    def market_classification(symbol, showIcon):
+        marketIcon = ''
         if str(symbol).isdigit():
             market = 'hk'
+            marketIcon = '🇭🇰'
         elif not str(symbol).isdigit() and '/' not in str(symbol):
             market = 'us'
+            marketIcon = '🇺🇸'
         elif not str(symbol).isdigit() and '/' in str(symbol):
             market = 'forex'
         else:
             market = 'unknonwn'
-        return market
+        if (showIcon):
+            return market + ' ' + marketIcon
+        else:
+            return market
 
-    async def nickname_add(self, message):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        query_token = msg_text.replace('/nickname/add ', '')
-        symbol, nickname = query_token.split(' ')
+    async def nickname_add(self, bot, update, args):
+        user_id = update.message.from_user.id
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
+        symbol, nickname = args
         market = self.market_classification(symbol)
         users = User.objects(telegramUid=user_id)
         Stock(symbol=symbol, nickname=nickname, createdBy=users[0].id, market=market).save()
-        response = 'New entry added:\nSymbol: %s, NickName: %s, Market: %s' % (symbol, nickname, market)
-        await self.send_message(response, user_id)
+        marketIcon = self.market_classification(symbol, True)
+        response = 'New entry added:\nSymbol: %s, NickName: %s, Market: %s' % (symbol, nickname, marketIcon)
+        bot.send_message(chat_id=update.message.chat_id, text=response)
 
-    async def nickname_remove(self, message):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        query_token = msg_text.replace('/nickname/remove ', '').strip()
+    async def nickname_remove(self, bot, update, args):
+        user_id = update.message.from_user.id
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
+        query_token = ''.join(args)
         users = User.objects(telegramUid=user_id)
-        Stock.objects(Q(createdBy=users[0].id) & (Q(symbol=query_token) | Q(nickname=query_token))).delete()
-        response = 'Entry removed: %s' % query_token
-        await self.send_message(response, user_id)
+        if len(query_token) == 0:
+            custom_keyboard = []
+            stocks = Stock.objects(createdBy=users[0].id)
+            for stock in stocks:
+                custom_keyboard.append([telegram.KeyboardButton('/nickname_remove '+stock.nickname)])
+            reply_markup = telegram.ReplyKeyboardMarkup(custom_keyboard)
+            bot.send_message(
+                chat_id=update.message.chat_id,
+                text='Please select which nickname to remove.',
+                reply_markup=reply_markup,
+                one_time_keyboard=True
+            )
+        else:
+            Stock.objects(Q(createdBy=users[0].id) & (Q(symbol=query_token) | Q(nickname=query_token))).delete()
+            response = 'Entry removed: %s' % query_token
+            bot.send_message(chat_id=update.message.chat_id, text=response)
 
-    async def watchlist_add(self, message):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        query_token = msg_text.replace('/watchlist/add ', '')
+    async def nickname_list(self, bot, update, args):
+        user_id = update.message.from_user.id
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
+        users = User.objects(telegramUid=user_id)
+        button_list = []
+        stocks = Stock.objects(createdBy=users[0].id)
+        for stock in stocks:
+            button_list.append([telegram.InlineKeyboardButton(text=stock.nickname + ' - ' + stock.symbol, callback_data='/nickname_list '+stock.nickname)])
+        reply_markup = telegram.InlineKeyboardMarkup(button_list)
+        response = 'You have _%d_ nicknames' % len(stocks)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response,
+            reply_markup=reply_markup,
+            parse_mode=telegram.ParseMode.MARKDOWN
+        )
+
+    def callback_query_response(self, bot, update):
+        bot.answerCallbackQuery(callback_query_id=update.callback_query.id, text=update.callback_query.data)
+
+
+    async def watchlist_add(self, bot, update, args):
+        user_id = update.message.from_user.id
+        query_token = ' '.join(args)
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
         new_symbol_list = query_token.split(',')
         new_symbol_list = [x.strip() for x in new_symbol_list]
         old_symbol_list = self.check_watchlist(user_id)
         symbol_list = list(set(old_symbol_list + new_symbol_list))
         users = User.objects(telegramUid=user_id)
-        Watchlist.objects(createdBy=users[0].id).delete()
-        Watchlist(createdBy=users[0].id, stockSymbols=symbol_list).save()
+        # Watchlist.objects(createdBy=users[0].id).delete()
+        Watchlist.objects(createdBy=users[0].id).update_one(stockSymbols=symbol_list, upsert=True)
+        # Watchlist(createdBy=users[0].id, stockSymbols=symbol_list).save()
         response = 'Watchlist added with symbols:\n%s' % ', '.join(new_symbol_list)
-        await self.send_message(response, user_id)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
-    async def watchlist_remove(self, message):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        query_token = msg_text.replace('/watchlist/remove ', '')
+    async def watchlist_remove(self, bot, update, args):
+        user_id = update.message.from_user.id
+        query_token = ' '.join(args)
         del_symbol_list = query_token.split(',')
         del_symbol_list = [x.strip() for x in del_symbol_list]
         old_symbol_list = self.check_watchlist(user_id)
@@ -281,7 +360,10 @@ class TelegramBot(object):
         Watchlist.objects(createdBy=users[0].id).delete()
         Watchlist(createdBy=users[0].id, stockSymbols=symbol_list).save()
         response = 'Watchlist removed the symbols:\n%s' % ', '.join(del_symbol_list)
-        await self.send_message(response, user_id)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
     async def position_add(self, message):
         msg_text = message['text']
@@ -496,7 +578,7 @@ def main():
     # tg_bot.loop.run_until_complete()
     # print(tg_bot.check_watchlist(263664408))
     # asyncio.set_event_loop(tg_bot.loop)
-    print(tg_bot.loop.run_until_complete(tg_bot.notification_disable({'message_id': 29, 'from': {'id': 263664408, 'is_bot': False, 'first_name': 'SCTYS', 'username': 'sctys', 'language_code': 'en-US'}, 'chat': {'id': 263664408, 'first_name': 'SCTYS', 'username': 'sctys', 'type': 'private'}, 'date': 1540632514, 'text': '/notification/disable'})))
+    # print(tg_bot.loop.run_until_complete(tg_bot.notification_disable({'message_id': 29, 'from': {'id': 263664408, 'is_bot': False, 'first_name': 'SCTYS', 'username': 'sctys', 'language_code': 'en-US'}, 'chat': {'id': 263664408, 'first_name': 'SCTYS', 'username': 'sctys', 'type': 'private'}, 'date': 1540632514, 'text': '/notification/disable'})))
 
 
 if __name__ == '__main__':
