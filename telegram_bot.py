@@ -106,6 +106,14 @@ class TelegramBot(object):
             '`/nickname` - List of defined nicknames.',
             '`/watchlist_add symbol|nickname` - Add an item to watchlist.',
             '`/watchlist_remove symbol|nickname` - Remove an item to watchlist.',
+            '`/position_add symbol|nickname buyprice buyunit` - Add an item to position.',
+            '`/position_remove symbol|nickname` - Remove an item from positions.',
+            '`/positions` - List of positions.',
+            '`/position symbol|nickname` - View a position.',
+            '`/notifications sl|tp|change` - List of notification.',
+            '`/notification_add sl|tp|change` - Add a type of notification.',
+            '`/notification_remove sl|tp|change` - Remove a type of notification.',
+            '`/notification sl|tp|change` - View a type of notification.',
         ])
         reply_markup = telegram.ReplyKeyboardRemove(remove_keyboard=True)
         bot.send_message(chat_id=update.message.chat_id, text=response, parse_mode=telegram.ParseMode.MARKDOWN,reply_markup=reply_markup)
@@ -135,6 +143,22 @@ class TelegramBot(object):
         self.dispatcher.add_handler(CommandHandler(
             'watchlist_remove',
             callback=lambda bot, update, args: self.loop.run_until_complete(self.watchlist_remove(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'position_add',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.position_add(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'positions',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.position_list(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'position',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.position_view(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'position_remove',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.position_remove(bot, update, args)),
             pass_args=True))
         self.dispatcher.add_handler(CallbackQueryHandler(callback=self.callback_query_response))
 
@@ -290,7 +314,7 @@ class TelegramBot(object):
         users = User.objects(telegramUid=user_id)
         Stock(symbol=symbol, nickname=nickname, createdBy=users[0].id, market=market).save()
         market_icon = self.market_icon(symbol)
-        response = 'New entry added:\nSymbol: %s, NickName: %s, Market: %s%s' % (symbol, nickname, market, market_icon)
+        response = '✅ New entry added:\nSymbol: %s, NickName: %s, Market: %s%s' % (symbol, nickname, market, market_icon)
         bot.send_message(chat_id=update.message.chat_id, text=response)
 
     async def nickname_remove(self, bot, update, args):
@@ -312,7 +336,7 @@ class TelegramBot(object):
             )
         else:
             Stock.objects(Q(createdBy=users[0].id) & (Q(symbol=query_token) | Q(nickname=query_token))).delete()
-            response = 'Entry removed: %s' % query_token
+            response = '❎ Entry removed: %s' % query_token
             bot.send_message(chat_id=update.message.chat_id, text=response)
 
     async def nickname_list(self, bot, update, args):
@@ -357,6 +381,7 @@ class TelegramBot(object):
     async def watchlist_remove(self, bot, update, args):
         user_id = update.message.from_user.id
         query_token = ' '.join(args)
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
         del_symbol_list = query_token.split(',')
         del_symbol_list = [x.strip() for x in del_symbol_list]
         old_symbol_list = self.check_watchlist(user_id)
@@ -370,10 +395,10 @@ class TelegramBot(object):
             text=response
         )
 
-    async def position_add(self, message):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        query_token = msg_text.replace('/position/add ', '')
+    async def position_add(self, bot, update, args):
+        user_id = update.message.from_user.id
+        query_token = ' '.join(args)
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
         symbol, buyprice, buyunit = query_token.split(' ')
         symbol = symbol.strip()
         buyprice = float(buyprice.strip())
@@ -383,48 +408,69 @@ class TelegramBot(object):
         if len(stock) == 0:
             stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=symbol))
         Position(createdBy=users[0].id, stock=stock[0].id, unitPrice=buyprice, quantity=buyunit).save()
-        response = 'Position added for %s, unit price = %s, quantity = %s' % (stock[0].symbol, buyprice, buyunit)
-        await self.send_message(response, user_id)
+        response = '✅ Position added for %s, unit price = %s, quantity = %s' % (stock[0].symbol, buyprice, buyunit)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
-    async def position_list(self, message):
-        user_id = message['from']['id']
+    async def position_list(self, bot, update, args):
+        user_id = update.message.from_user.id
         users = User.objects(telegramUid=user_id)
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
         position = Position.objects(createdBy=users[0].id)
         position = ['Symbol: %s, Nickname: %s, unit price: %s, quantity: %s' % (
             x.stock.symbol, x.stock.nickname, x.unitPrice, x.quantity) for x in position]
         response = '\n'.join(position)
-        await self.send_message(response, user_id)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
-    async def position_view(self, message):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        query_token = msg_text.replace('/position/view ', '')
+    async def position_view(self, bot, update, args):
+        user_id = update.message.from_user.id
+        users = User.objects(telegramUid=user_id)
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
+        query_token = ' '.join(args)
         query = query_token.strip()
         users = User.objects(telegramUid=user_id)
         stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=query))
         if len(stock) == 0:
             stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
         position = Position.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id))
+        position = position[0]
+        stock = stock[0]
         old_price = position.unitPrice
-        quantity = Position.quantity
-        new_price = await self.scrapper.report_quote(list(stock.symbol))[0][stock.symbol].split(',')[0]
+        quantity = position.quantity
+        new_price = await self.scrapper.report_quote([stock.symbol])
+        new_price = new_price[0][stock.symbol].split(',')[0]
         profit = (float(new_price) - float(old_price)) * quantity
         percent_profit = str((float(new_price) / float(old_price) - 1) * 100) + '%'
-        response = 'Profit = %s, Percent profit = %s' % (profit, percent_profit)
-        await self.send_message(response, user_id)
+        if profit > 0:
+            response = '😆 Profit = %s, Percent profit = %s' % (profit, percent_profit)
+        else:
+            response = '😭 Loss = %s, Percent loss = %s' % (profit, percent_profit)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
-    async def position_remove(self, message):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        query_token = msg_text.replace('/position/remove ', '')
+    async def position_remove(self, bot, update, args):
+        user_id = update.message.from_user.id
+        users = User.objects(telegramUid=user_id)
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
+        query_token = ' '.join(args)
         query = query_token.strip()
         users = User.objects(telegramUid=user_id)
         stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=query))
         if len(stock) == 0:
             stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
         Position.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id)).delete()
-        response = 'Position removed for %s' % stock[0].symbol
-        await self.send_message(response, user_id)
+        response = '❎ Position removed for %s' % stock[0].symbol
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
     async def notification_manage_list(self, message, method):
         user_id = message['from']['id']
@@ -571,6 +617,7 @@ def main():
     tg_bot = TelegramBot()
     tg_bot.setup_handler()
     tg_bot.updater.start_polling()
+
     # print(tg_bot.loop.run_until_complete(tg_bot.get_message()))
     # print(tg_bot.loop.run_until_complete(tg_bot.get_unprocessed_message()))
     # print(tg_bot.loop.run_until_complete(tg_bot.send_message('Testing', 189497538)))
