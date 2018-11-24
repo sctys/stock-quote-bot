@@ -547,6 +547,8 @@ class TelegramBot(object):
         notification = NotificationSetting.objects(enabled=True)
         notification = list(map(lambda x: {'user_id': x.createdBy.telegramUid, 'symbol': x.stock.symbol, 'type': x.type,
                                            'threshold': x.threshold}, notification))
+        user_enabled = [x.createdBy.telegramUid for x in UserSettings.objects(notificationEnable=True)]
+        notification = [x for x in notification if x['user_id'] in user_enabled]
         return notification
 
     async def price_change_notification(self, notification):
@@ -565,10 +567,11 @@ class TelegramBot(object):
         if price < notification['threshold']:
             users = User.objects(telegramUid=notification['user_id'])
             stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
-            NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(type='sl')).update(
-                enabled=False)
+            [NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=x.id) & Q(
+                type='sl')).update(enabled=False) for x in stock]
             await self.send_message(user_id=notification['user_id'],
                                     content='SL for %s reached.' % notification['symbol'])
+
     async def tp_notification(self, notification):
         price = float(notification['quote'].split(',')[0])
         if price > notification['threshold']:
@@ -592,6 +595,7 @@ class TelegramBot(object):
             [await self.price_change_notification(x) for x in price_change_notification] + [
                 await self.sl_notification(x) for x in sl_notification] + [
                 await self.tp_notification(x) for x in tp_notification]
+            await asyncio.sleep(60)
 
     def thread_check_notification(self):
         asyncio.set_event_loop(self.loop)
@@ -617,7 +621,7 @@ def main():
     # tg_bot.loop.run_until_complete()
     # print(tg_bot.check_watchlist(263664408))
     # asyncio.set_event_loop(tg_bot.loop)
-    # print(tg_bot.loop.run_until_complete(tg_bot.notification_disable({'message_id': 29, 'from': {'id': 263664408, 'is_bot': False, 'first_name': 'SCTYS', 'username': 'sctys', 'language_code': 'en-US'}, 'chat': {'id': 263664408, 'first_name': 'SCTYS', 'username': 'sctys', 'type': 'private'}, 'date': 1540632514, 'text': '/notification/disable'})))
+    # print(tg_bot.loop.run_until_complete(tg_bot.notification_enable({'message_id': 29, 'from': {'id': 263664408, 'is_bot': False, 'first_name': 'SCTYS', 'username': 'sctys', 'language_code': 'en-US'}, 'chat': {'id': 263664408, 'first_name': 'SCTYS', 'username': 'sctys', 'type': 'private'}, 'date': 1540632514, 'text': '/notification/enable'})))
 
 
 if __name__ == '__main__':
