@@ -3,6 +3,7 @@ import asyncio
 import os
 import logging
 import json
+import threading
 from stock_scrapper import StockScrapper
 from db import *
 from logging.handlers import TimedRotatingFileHandler
@@ -251,7 +252,7 @@ class TelegramBot(object):
         symbol_dict = {x: y for x, y in zip(symbol, query)}
         quotes = await self.scrapper.report_quote(symbol)
         response = '\n'.join(['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes])
-        is_increase = response.find('+') > 0
+        is_increase = float(response.split(',')[-1].split('(')[0]) > 0
         is_decrease = response.find('-') > 0
         if is_increase:
             response = '📈 ' + response
@@ -407,7 +408,8 @@ class TelegramBot(object):
         position = Position.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id))
         old_price = position.unitPrice
         quantity = Position.quantity
-        new_price = await self.scrapper.report_quote(list(stock.symbol))[0][stock.symbol].split(',')[0]
+        new_price = await self.scrapper.report_quote([stock.symbol])
+        new_price = new_price[0][stock.symbol].split(',')[0]
         profit = (float(new_price) - float(old_price)) * quantity
         percent_profit = str((float(new_price) / float(old_price) - 1) * 100) + '%'
         response = 'Profit = %s, Percent profit = %s' % (profit, percent_profit)
@@ -547,29 +549,61 @@ class TelegramBot(object):
                                            'threshold': x.threshold}, notification))
         return notification
 
-    def price_change_notification(self, quote, notification):
-        if ',' in quote:
-            percentage_change = abs(float(quote.split('(')[-1].split('%', 0)) / 100)
+    async def price_change_notification(self, notification):
+        if ',' in notification['quote']:
+            percentage_change = abs(float(notification['quote'].split('(')[-1].split('%', 0)) / 100)
             if percentage_change > notification['threshold']:
-                notification_message += {'user_id': notification['user_id'],
-                                              'message': 'Price change percentage for %s reached.' %
-                                                         notification['symbol']}
                 users = User.objects(telegramUid=notification['user_id'])
                 stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
-                NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id))
+                NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(
+                    type='priceChange')).update(enabled=False)
+                await self.send_message(user_id=notification['user_id'],
+                                        content='Price change percentage for %s reached.' % notification['symbol'])
 
-
+    async def sl_notification(self, notification):
+        price = float(notification['quote'].split(',')[0])
+        if price < notification['threshold']:
+            users = User.objects(telegramUid=notification['user_id'])
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
+            NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(type='sl')).update(
+                enabled=False)
+            await self.send_message(user_id=notification['user_id'],
+                                    content='SL for %s reached.' % notification['symbol'])
+    async def tp_notification(self, notification):
+        price = float(notification['quote'].split(',')[0])
+        if price > notification['threshold']:
+            users = User.objects(telegramUid=notification['user_id'])
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
+            NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(type='tp')).update(
+                enabled=False)
+            await self.send_message(user_id=notification['user_id'],
+                                    content='TP for %s reached.' % notification['symbol'])
 
     async def loop_check_notification(self):
         while True:
             notification = self.get_notification()
             symbols = [x['symbol'] for x in notification]
             quotes = await self.scrapper.report_quote(symbols)
+            notification = [{**x, **{'quote': [y for y in quotes if x['symbol'] in y][0][x['symbol']]}}
+                            for x in notification]
+            price_change_notification = [x for x in notification if x['type'] == 'priceChange']
+            sl_notification = [x for x in notification if x['type'] == 'sl']
+            tp_notification = [x for x in notification if x['type'] == 'tp']
+            [await self.price_change_notification(x) for x in price_change_notification] + [
+                await self.sl_notification(x) for x in sl_notification] + [
+                await self.tp_notification(x) for x in tp_notification]
+
+    def thread_check_notification(self):
+        asyncio.set_event_loop(self.loop)
+        thread = threading.Thread(target=lambda: self.loop.run_until_complete(self.loop_check_notification()),
+                                  daemon=True)
+        thread.start()
 
 
 def main():
     tg_bot = TelegramBot()
     tg_bot.setup_handler()
+    tg_bot.thread_check_notification()
     tg_bot.updater.start_polling()
     # print(tg_bot.loop.run_until_complete(tg_bot.get_message()))
     # print(tg_bot.loop.run_until_complete(tg_bot.get_unprocessed_message()))
