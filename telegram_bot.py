@@ -3,6 +3,7 @@ import asyncio
 import os
 import logging
 import json
+import threading
 from stock_scrapper import StockScrapper
 from db import *
 from logging.handlers import TimedRotatingFileHandler
@@ -114,6 +115,8 @@ class TelegramBot(object):
             '`/notification_add sl|tp|change` - Add a type of notification.',
             '`/notification_remove sl|tp|change` - Remove a type of notification.',
             '`/notification sl|tp|change` - View a type of notification.',
+            '`/notification_enable` - Enable all notifications.',
+            '`/notification_disable` - Disable all notifications.',
         ])
         reply_markup = telegram.ReplyKeyboardRemove(remove_keyboard=True)
         bot.send_message(chat_id=update.message.chat_id, text=response, parse_mode=telegram.ParseMode.MARKDOWN,reply_markup=reply_markup)
@@ -159,6 +162,26 @@ class TelegramBot(object):
         self.dispatcher.add_handler(CommandHandler(
             'position_remove',
             callback=lambda bot, update, args: self.loop.run_until_complete(self.position_remove(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'notifications',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.notification_manage_list(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'notification_add',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.notification_manage_add(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'notification_remove',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.notification_manage_remove(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'notification_enable',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.notification_enable(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'notification_disable',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.notification_disable(bot, update, args)),
             pass_args=True))
         self.dispatcher.add_handler(CallbackQueryHandler(callback=self.callback_query_response))
 
@@ -275,7 +298,7 @@ class TelegramBot(object):
         symbol_dict = {x: y for x, y in zip(symbol, query)}
         quotes = await self.scrapper.report_quote(symbol)
         response = '\n'.join(['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes])
-        is_increase = response.find('+') > 0
+        is_increase = float(response.split(',')[-1].split('(')[0]) > 0
         is_decrease = response.find('-') > 0
         if is_increase:
             response = '📈 ' + response
@@ -305,6 +328,13 @@ class TelegramBot(object):
         elif not str(symbol).isdigit() and '/' in str(symbol):
             market_icon = ''
         return market_icon
+
+    @staticmethod
+    def get_method_name(method):
+        if (method == 'change'):
+            return 'priceChange'
+        else:
+            return method
 
     async def nickname_add(self, bot, update, args):
         user_id = update.message.from_user.id
@@ -472,14 +502,21 @@ class TelegramBot(object):
             text=response
         )
 
-    async def notification_manage_list(self, message, method):
-        user_id = message['from']['id']
+    async def notification_manage_list(self, bot, update, args):
+        user_id = update.message.from_user.id
         users = User.objects(telegramUid=user_id)
-        notification = NotificationSetting.objects(Q(createdBy=users[0].id) & Q(type=method) & Q(enabled=True))
-        notification = ['Symbol: %s, Nickname: %s, Threshold: %s, Type: %s' % (
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
+        notification = NotificationSetting.objects(Q(createdBy=users[0].id) & Q(enabled=True))
+        if len(notification) == 0:
+            response = 'You have no notification for %s' % method
+        else:
+            notification = ['🔈 Symbol: %s, Nickname: %s, \n       Threshold: %s, Type: %s' % (
             x.stock.symbol, x.stock.nickname, x.threshold, x.type) for x in notification]
-        response = '\n'.join(notification)
-        await self.send_message(response, user_id)
+            response = '\n'.join(notification)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
     async def notification_manage_price_movement_percentage_list(self, message):
         await self.notification_manage_list(message, 'priceChange')
@@ -517,15 +554,13 @@ class TelegramBot(object):
     async def notification_manage_tp_view(self, message):
         await self.notification_manage_view(message, 'tp')
 
-    async def notification_manage_add(self, message, method):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        method_dict = {'priceChange': 'price-movement-percentage', 'sl': 'sl', 'tp': 'tp'}
-        replace_text = '/notification/manage/%s/add ' % method_dict[method]
-        query_token = msg_text.replace(replace_text, '')
-        query, threshold = query_token.split(' ')
-        query = query.strip()
-        threshold = threshold.strip()
+    async def notification_manage_add(self, bot, update, args):
+        user_id = update.message.from_user.id
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
+        method = self.get_method_name(args[0])
+        query = args[1]
+        threshold = args[2]
+
         if '%' in threshold:
             threshold = float(threshold.replace('%', '')) / 100
         else:
@@ -536,9 +571,12 @@ class TelegramBot(object):
             stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
         NotificationSetting(createdBy=users[0].id, stock=stock[0].id, type=method, threshold=threshold,
                             enabled=True).save()
-        response = 'Notification added:\nSymbol: %s, Nickname: %s, Threshold: %s, Type: %s' % (
+        response = '🔈 Notification added:\nSymbol: %s, Nickname: %s, Threshold: %s, Type: %s' % (
             stock[0].symbol, stock[0].nickname, threshold, method)
-        await self.send_message(response, user_id)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
     async def notification_manage_price_movement_percentage_add(self, message):
         await self.notification_manage_add(message, 'priceChange')
@@ -549,21 +587,23 @@ class TelegramBot(object):
     async def notification_manage_tp_add(self, message):
         await self.notification_manage_add(message, 'tp')
 
-    async def notification_manage_remove(self, message, method):
-        msg_text = message['text']
-        user_id = message['from']['id']
-        method_dict = {'priceChange': 'price-movement-percentage', 'sl': 'sl', 'tp': 'tp'}
-        replace_text = '/notification/manage/%s/remove ' % method_dict[method]
-        query_token = msg_text.replace(replace_text, '')
-        query = query_token.strip()
+    async def notification_manage_remove(self, bot, update, args):
+        user_id = update.message.from_user.id
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
+        method = self.get_method_name(args[0])
+        query = args[1]
+
         users = User.objects(telegramUid=user_id)
         stock = Stock.objects(Q(createdBy=users[0].id) & Q(nickname=query))
         if len(stock) == 0:
             stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=query))
         NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(type=method)).update(
             enabled=False)
-        response = 'Notification removed for symbol %s of type %s' % (stock[0].symbol, method)
-        await self.send_message(response, user_id)
+        response = '🔇 Notification removed for symbol %s of type %s' % (stock[0].symbol, method)
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
     async def notification_manage_price_movement_percentage_remove(self, message):
         await self.notification_manage_remove(message, 'priceChange')
@@ -574,18 +614,25 @@ class TelegramBot(object):
     async def notification_manage_tp_remove(self, message):
         await self.notification_manage_remove(message, 'tp')
 
-    async def notification_switch(self, message, enable):
-        user_id = message['from']['id']
+    async def notification_switch(self, bot, update, enable):
+        user_id = update.message.from_user.id
+        bot.send_chat_action(chat_id=update.message.chat_id, action=telegram.ChatAction.TYPING)
         users = User.objects(telegramUid=user_id)
         UserSettings.objects(createdBy=users[0].id).update(notificationEnable=enable)
-        response = 'Notification %s' % ('enabled' if enable else 'disabled')
-        await self.send_message(response, user_id)
+        if enable:
+            response = '🔈 Notification enabled'
+        else:
+            response = '🔇 Notification disabled'
+        bot.send_message(
+            chat_id=update.message.chat.id,
+            text=response
+        )
 
-    async def notification_enable(self, message):
-        await self.notification_switch(message, True)
+    async def notification_enable(self, bot, update, args):
+        await self.notification_switch(bot, update, True)
 
-    async def notification_disable(self, message):
-        await self.notification_switch(message, False)
+    async def notification_disable(self, bot, update, args):
+        await self.notification_switch(bot, update, False)
 
     def get_notification(self):
         notification = NotificationSetting.objects(enabled=True)
@@ -593,29 +640,61 @@ class TelegramBot(object):
                                            'threshold': x.threshold}, notification))
         return notification
 
-    def price_change_notification(self, quote, notification):
-        if ',' in quote:
-            percentage_change = abs(float(quote.split('(')[-1].split('%', 0)) / 100)
+    async def price_change_notification(self, notification):
+        if ',' in notification['quote']:
+            percentage_change = abs(float(notification['quote'].split('(')[-1].split('%', 0)) / 100)
             if percentage_change > notification['threshold']:
-                notification_message += {'user_id': notification['user_id'],
-                                              'message': 'Price change percentage for %s reached.' %
-                                                         notification['symbol']}
                 users = User.objects(telegramUid=notification['user_id'])
                 stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
-                NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id))
+                NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(
+                    type='priceChange')).update(enabled=False)
+                await self.send_message(user_id=notification['user_id'],
+                                        content='Price change percentage for %s reached.' % notification['symbol'])
 
-
+    async def sl_notification(self, notification):
+        price = float(notification['quote'].split(',')[0])
+        if price < notification['threshold']:
+            users = User.objects(telegramUid=notification['user_id'])
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
+            NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(type='sl')).update(
+                enabled=False)
+            await self.send_message(user_id=notification['user_id'],
+                                    content='SL for %s reached.' % notification['symbol'])
+    async def tp_notification(self, notification):
+        price = float(notification['quote'].split(',')[0])
+        if price > notification['threshold']:
+            users = User.objects(telegramUid=notification['user_id'])
+            stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
+            NotificationSetting.objects(Q(createdBy=users[0].id) & Q(stock=stock[0].id) & Q(type='tp')).update(
+                enabled=False)
+            await self.send_message(user_id=notification['user_id'],
+                                    content='TP for %s reached.' % notification['symbol'])
 
     async def loop_check_notification(self):
         while True:
             notification = self.get_notification()
             symbols = [x['symbol'] for x in notification]
             quotes = await self.scrapper.report_quote(symbols)
+            notification = [{**x, **{'quote': [y for y in quotes if x['symbol'] in y][0][x['symbol']]}}
+                            for x in notification]
+            price_change_notification = [x for x in notification if x['type'] == 'priceChange']
+            sl_notification = [x for x in notification if x['type'] == 'sl']
+            tp_notification = [x for x in notification if x['type'] == 'tp']
+            [await self.price_change_notification(x) for x in price_change_notification] + [
+                await self.sl_notification(x) for x in sl_notification] + [
+                await self.tp_notification(x) for x in tp_notification]
+
+    def thread_check_notification(self):
+        asyncio.set_event_loop(self.loop)
+        thread = threading.Thread(target=lambda: self.loop.run_until_complete(self.loop_check_notification()),
+                                  daemon=True)
+        thread.start()
 
 
 def main():
     tg_bot = TelegramBot()
     tg_bot.setup_handler()
+    # tg_bot.thread_check_notification()
     tg_bot.updater.start_polling()
 
     # print(tg_bot.loop.run_until_complete(tg_bot.get_message()))

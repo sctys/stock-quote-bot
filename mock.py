@@ -3,10 +3,10 @@ from db import *
 # aUser = User(telegramUid=263664408, name="SiMon")
 # aUser.save()
 
-aUser = User(telegramUid=189497538, name="MayMay")
-aUser.save()
+# aUser = User(telegramUid=189497538, name="MayMay")
+# aUser.save()
 
-# for user in User.objects(telegramUid=263664408):
+for user in User.objects(telegramUid=189497538):
 #     aStock = Stock(
 #         createdBy=user.id,
 #         symbol="GOOG",
@@ -22,11 +22,11 @@ aUser.save()
 #             quantity=10)
 #     aPosition.save()
 
-#     aUserSettings = UserSettings(
-#         createdBy=user.id,
-#         notificationEnable=True
-#     )
-#     aUserSettings.save()
+    aUserSettings = UserSettings(
+        createdBy=user.id,
+        notificationEnable=True
+    )
+    aUserSettings.save()
 
 #     aWatchlist = Watchlist(
 #         createdBy=user.id,
