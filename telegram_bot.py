@@ -644,7 +644,7 @@ class TelegramBot(object):
 
     async def price_change_notification(self, notification):
         if ',' in notification['quote']:
-            percentage_change = abs(float(notification['quote'].split('(')[-1].split('%', 0)) / 100)
+            percentage_change = abs(float(notification['quote'].split('(')[-1].split('%')[0]) / 100)
             if percentage_change > notification['threshold']:
                 users = User.objects(telegramUid=notification['user_id'])
                 stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
@@ -698,7 +698,7 @@ class TelegramBot(object):
 def main():
     tg_bot = TelegramBot()
     tg_bot.setup_handler()
-    # tg_bot.thread_check_notification()
+    tg_bot.thread_check_notification()
     tg_bot.updater.start_polling()
 
     # print(tg_bot.loop.run_until_complete(tg_bot.get_message()))
