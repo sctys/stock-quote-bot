@@ -644,7 +644,11 @@ class TelegramBot(object):
 
     async def price_change_notification(self, notification):
         if ',' in notification['quote']:
-            percentage_change = abs(float(notification['quote'].split('(')[-1].split('%')[0]) / 100)
+            print(notification['quote'])
+            try:
+                percentage_change = abs(float(notification['quote'].split('(')[-1].split('%')[0]) / 100)
+            except Exception:
+                percentage_change = 0
             if percentage_change > notification['threshold']:
                 users = User.objects(telegramUid=notification['user_id'])
                 stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
@@ -654,7 +658,10 @@ class TelegramBot(object):
                                         content='Price change percentage for %s reached.' % notification['symbol'])
 
     async def sl_notification(self, notification):
-        price = float(notification['quote'].split(',')[0])
+        try:
+            price = float(notification['quote'].split(',')[0])
+        except Exception:
+            price = float('inf')
         if price < notification['threshold']:
             users = User.objects(telegramUid=notification['user_id'])
             stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
@@ -664,7 +671,10 @@ class TelegramBot(object):
                                     content='SL for %s reached.' % notification['symbol'])
 
     async def tp_notification(self, notification):
-        price = float(notification['quote'].split(',')[0])
+        try:
+            price = float(notification['quote'].split(',')[0])
+        except Exception:
+            price = - float('inf')
         if price > notification['threshold']:
             users = User.objects(telegramUid=notification['user_id'])
             stock = Stock.objects(Q(createdBy=users[0].id) & Q(symbol=notification['symbol']))
