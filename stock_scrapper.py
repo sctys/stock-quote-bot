@@ -3,7 +3,7 @@ import aiohttp
 import logging
 import os
 import json
-import arsenic
+# import arsenic
 from logging.handlers import TimedRotatingFileHandler
 from bs4 import BeautifulSoup
 from db import *
@@ -16,9 +16,9 @@ class StockScrapper(object):
         self.us_stock_url = ['https://www.nasdaq.com/en/symbol/', '/real-time']
         self.forex_url = ['http://forex.1forge.com/1.0.3/quotes?pairs=', '&api_key=']
         self.__one_forge_api = os.environ['ONEFORGE_API']
-        self.driver_path = os.getcwd() + '/chromedriver'
-        self.service = arsenic.services.Chromedriver(binary=self.driver_path)
-        self.browser = arsenic.browsers.Chrome(chromeOptions={'args': ['-headless', '--disable-gpu']})
+        #self.driver_path = os.getcwd() + '/chromedriver'
+        #self.service = arsenic.services.Chromedriver(binary=self.driver_path)
+        #self.browser = arsenic.browsers.Chrome(chromeOptions={'args': ['-headless', '--disable-gpu']})
         self.loop = asyncio.new_event_loop()
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
@@ -179,7 +179,7 @@ def main():
     stock = StockScrapper()
     # quotes = stock.loop.run_until_complete(stock.report_quote([3, 10, 700, 2318, 'AAPL', 'AMZN', 'NVDA', 'EUR/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD',
     #                              'BTC/ETH']))
-    quotes = stock.loop.run_until_complete(stock.report_quote([3, 10, 700, 2318]))
+    quotes = stock.loop.run_until_complete(stock.report_quote(['BTC/USD']))
     print(quotes)
 
 

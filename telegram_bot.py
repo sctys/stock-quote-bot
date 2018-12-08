@@ -107,6 +107,7 @@ class TelegramBot(object):
             '`/nickname` - List of defined nicknames.',
             '`/watchlist_add symbol|nickname` - Add an item to watchlist.',
             '`/watchlist_remove symbol|nickname` - Remove an item to watchlist.',
+            '`/watchlist` - View the watchlist.',
             '`/position_add symbol|nickname buyprice buyunit` - Add an item to position.',
             '`/position_remove symbol|nickname` - Remove an item from positions.',
             '`/positions` - List of positions.',
@@ -146,6 +147,10 @@ class TelegramBot(object):
         self.dispatcher.add_handler(CommandHandler(
             'watchlist_remove',
             callback=lambda bot, update, args: self.loop.run_until_complete(self.watchlist_remove(bot, update, args)),
+            pass_args=True))
+        self.dispatcher.add_handler(CommandHandler(
+            'watchlist',
+            callback=lambda bot, update, args: self.loop.run_until_complete(self.ask_price(bot, update, args)),
             pass_args=True))
         self.dispatcher.add_handler(CommandHandler(
             'position_add',
@@ -298,16 +303,22 @@ class TelegramBot(object):
         symbol_dict = {x: y for x, y in zip(symbol, query)}
         try:
             quotes = await self.scrapper.report_quote(symbol)
+            response = ['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes]
+            # is_increase = [x.split(',')[-1].split('(')[0] > 0 if '/' not in x else False for x in response]
+            # is_decrease = [x.find('-') > 0 for x in response]
+            sign = ['null' if '/' in x or x.split(',')[-1].split('(')[0] == 0 else 'down' if x.find('-') > 0 else 'up'
+                    for x in response]
+            response = ['📈 ' + x if y == 'up' else '📉 ' + x if y == 'down' else x for x, y in zip(response, sign)]
+            response = '\n'.join(response)
+            # is_increase = float(response.split(',')[-1].split('(')[0]) > 0 if '/' not in response else False
+            # is_decrease = response.find('-') > 0
+            # if is_increase:
+            #     response = '📈 ' + response
+            # elif is_decrease:
+            #     response = '📉 ' + response
+            bot.send_message(chat_id=update.message.chat_id, text=response)
         except Exception as e:
             self.logger.error('Unable to scrap quotes. %s' % e)
-        response = '\n'.join(['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes])
-        is_increase = float(response.split(',')[-1].split('(')[0]) > 0
-        is_decrease = response.find('-') > 0
-        if is_increase:
-            response = '📈 ' + response
-        elif is_decrease:
-            response = '📉 ' + response
-        bot.send_message(chat_id=update.message.chat_id, text=response)
 
     @staticmethod
     def market_classification(symbol):
