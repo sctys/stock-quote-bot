@@ -303,20 +303,24 @@ class TelegramBot(object):
         symbol_dict = {x: y for x, y in zip(symbol, query)}
         try:
             quotes = await self.scrapper.report_quote(symbol)
+            symbols = [list(x.keys())[0] for x in quotes]
+            self.logger.debug('Quotes = ' + json.dumps(quotes) + '\nSymbols =' + json.dumps(symbols))
             response = ['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes]
             # is_increase = [x.split(',')[-1].split('(')[0] > 0 if '/' not in x else False for x in response]
             # is_decrease = [x.find('-') > 0 for x in response]
             sign = ['null' if '/' in x or x.split(',')[-1].split('(')[0] == 0 else 'down' if x.find('-') > 0 else 'up'
                     for x in response]
             response = ['📈 ' + x if y == 'up' else '📉 ' + x if y == 'down' else x for x, y in zip(response, sign)]
-            response = '\n'.join(response)
-            # is_increase = float(response.split(',')[-1].split('(')[0]) > 0 if '/' not in response else False
-            # is_decrease = response.find('-') > 0
-            # if is_increase:
-            #     response = '📈 ' + response
-            # elif is_decrease:
-            #     response = '📉 ' + response
-            bot.send_message(chat_id=update.message.chat_id, text=response)
+            markdown_response = []
+            for res, symbol in zip(response, symbols):
+                market = 'hk' if symbol.isdigit() else 'us'
+                res = '['+res+']'
+                link = 'http://www.aastocks.com/tc/stocks/quote/detailchart.aspx?symbol='+symbol+'' if market=='hk' else \
+                    'https://finance.yahoo.com/chart/'+symbol+'#eyJpbnRlcnZhbCI6ImRheSIsInBlcmlvZGljaXR5IjoxLCJ0aW1lVW5pdCI6bnVsbCwiY2FuZGxlV2lkdGgiOjgsInZvbHVtZVVuZGVybGF5Ijp0cnVlLCJhZGoiOnRydWUsImNyb3NzaGFpciI6dHJ1ZSwiY2hhcnRUeXBlIjoiY2FuZGxlIiwiZXh0ZW5kZWQiOmZhbHNlLCJtYXJrZXRTZXNzaW9ucyI6e30sImFnZ3JlZ2F0aW9uVHlwZSI6Im9obGMiLCJjaGFydFNjYWxlIjoibGluZWFyIiwicGFuZWxzIjp7ImNoYXJ0Ijp7InBlcmNlbnQiOjEsImRpc3BsYXkiOiJBREJFIiwiY2hhcnROYW1lIjoiY2hhcnQiLCJ0b3AiOjB9fSwic2V0U3BhbiI6e30sImxpbmVXaWR0aCI6Miwic3RyaXBlZEJhY2tncm91ZCI6dHJ1ZSwiZXZlbnRzIjp0cnVlLCJjb2xvciI6IiMwMDgxZjIiLCJldmVudE1hcCI6eyJjb3Jwb3JhdGUiOnsiZGl2cyI6dHJ1ZSwic3BsaXRzIjp0cnVlfSwic2lnRGV2Ijp7fX0sInN5bWJvbHMiOlt7InN5bWJvbCI6IkFEQkUiLCJzeW1ib2xPYmplY3QiOnsic3ltYm9sIjoiQURCRSJ9LCJwZXJpb2RpY2l0eSI6MSwiaW50ZXJ2YWwiOiJkYXkiLCJ0aW1lVW5pdCI6bnVsbCwic2V0U3BhbiI6e319XSwic3R1ZGllcyI6eyJ2b2wgdW5kciI6eyJ0eXBlIjoidm9sIHVuZHIiLCJpbnB1dHMiOnsiaWQiOiJ2b2wgdW5kciIsImRpc3BsYXkiOiJ2b2wgdW5kciJ9LCJvdXRwdXRzIjp7IlVwIFZvbHVtZSI6IiMwMGIwNjEiLCJEb3duIFZvbHVtZSI6IiNGRjMzM0EifSwicGFuZWwiOiJjaGFydCIsInBhcmFtZXRlcnMiOnsid2lkdGhGYWN0b3IiOjAuNDUsImNoYXJ0TmFtZSI6ImNoYXJ0In19fX0%3D'
+                res += '('+link+')'
+                markdown_response.append(res)
+            markdown_response = '\n'.join(markdown_response)
+            bot.send_message(chat_id=update.message.chat_id, text=markdown_response, parse_mode=telegram.ParseMode.MARKDOWN)
         except Exception as e:
             self.logger.error('Unable to scrap quotes. %s' % e)
 
