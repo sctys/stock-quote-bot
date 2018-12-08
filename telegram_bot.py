@@ -296,7 +296,10 @@ class TelegramBot(object):
             query = [x.strip() for x in query]
         symbol = [self.check_nickname(user_id, x) for x in query]
         symbol_dict = {x: y for x, y in zip(symbol, query)}
-        quotes = await self.scrapper.report_quote(symbol)
+        try:
+            quotes = await self.scrapper.report_quote(symbol)
+        except Exception as e:
+            self.logger.error('Unable to scrap quotes. %s' % e)
         response = '\n'.join(['%s: %s' % (symbol_dict[list(x.keys())[0]], list(x.values())[0]) for x in quotes])
         is_increase = float(response.split(',')[-1].split('(')[0]) > 0
         is_decrease = response.find('-') > 0
@@ -693,14 +696,16 @@ class TelegramBot(object):
             price_change_notification = [x for x in notification if x['type'] == 'priceChange']
             sl_notification = [x for x in notification if x['type'] == 'sl']
             tp_notification = [x for x in notification if x['type'] == 'tp']
-            [await self.price_change_notification(x) for x in price_change_notification] + [
-                await self.sl_notification(x) for x in sl_notification] + [
-                await self.tp_notification(x) for x in tp_notification]
+            tasks = [asyncio.ensure_future(self.price_change_notification(x)) for x in price_change_notification] + [
+                asyncio.ensure_future(self.sl_notification(x)) for x in sl_notification] + [
+                asyncio.ensure_future(self.tp_notification(x)) for x in tp_notification]
+            await asyncio.gather(*tasks)
             await asyncio.sleep(60)
 
     def thread_check_notification(self):
-        asyncio.set_event_loop(self.loop)
-        thread = threading.Thread(target=lambda: self.loop.run_until_complete(self.loop_check_notification()),
+        asyncio.set_event_loop(self.scrapper.loop)
+        asyncio.get_child_watcher().attach_loop(self.scrapper.loop)
+        thread = threading.Thread(target=lambda: self.scrapper.loop.run_until_complete(self.loop_check_notification()),
                                   daemon=True)
         thread.start()
 

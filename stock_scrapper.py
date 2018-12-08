@@ -3,6 +3,7 @@ import aiohttp
 import logging
 import os
 import json
+import arsenic
 from logging.handlers import TimedRotatingFileHandler
 from bs4 import BeautifulSoup
 from db import *
@@ -15,6 +16,9 @@ class StockScrapper(object):
         self.us_stock_url = ['https://www.nasdaq.com/en/symbol/', '/real-time']
         self.forex_url = ['http://forex.1forge.com/1.0.3/quotes?pairs=', '&api_key=']
         self.__one_forge_api = os.environ['ONEFORGE_API']
+        self.driver_path = os.getcwd() + '/chromedriver'
+        self.service = arsenic.services.Chromedriver(binary=self.driver_path)
+        self.browser = arsenic.browsers.Chrome(chromeOptions={'args': ['-headless', '--disable-gpu']})
         self.loop = asyncio.new_event_loop()
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
@@ -33,8 +37,10 @@ class StockScrapper(object):
         while count < 10 and page is None:
             try:
                 self.logger.debug('Start loading page: %s' % url)
+                headers = {'Cookie': 'ASP.NET_SessionId=3pz5rijqiysbfomo4u1ladmu; aa_cookie=219.76.18.79_56624_1544257454; mredir=m; CookiePolicyCheck=0; __asc=3dbbdef81678ce271176068074a; __auc=3dbbdef81678ce271176068074a; __utma=177965731.587761365.1544256910.1544256910.1544256910.1; __utmc=177965731; __utmz=177965731.1544256910.1.1.utmcsr=(direct)|utmccn=(direct)|utmcmd=(none); __utmt=1; __utmb=177965731.1.10.1544256910; __utma=81143559.146825753.1544256910.1544256910.1544256910.1; __utmc=81143559; __utmz=81143559.1544256910.1.1.utmcsr=(direct)|utmccn=(direct)|utmcmd=(none); __utmt_b=1; __utmb=81143559.1.10.1544256910; AALTP=1',
+                           'Referrer': url}
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as response:
+                    async with session.get(url, headers=headers) as response:
                         if response.status != 200:
                             page = None
                             self.logger.error('%s response error.' % url)
@@ -52,6 +58,40 @@ class StockScrapper(object):
                 self.logger.error('%s Unable to load. %s' % (url, e))
             count += 1
         return None, None
+
+    async def browser_page_load(self, url, check_token):
+        count = 0
+        page = None
+        while count < 10 and page is None:
+            try:
+                self.logger.debug('Start loading page: %s' % url)
+                async with arsenic.get_session(self.service, self.browser) as session:
+                    await session.get(url)
+                    session = await self._make_query(session, url, check_token)
+                    page = await session.get_page_source()
+                soup = BeautifulSoup(page, 'html.parser')
+                if len(soup.select(check_token)) == 0:
+                    self.logger.error('%s html structure invalid.' % url)
+                    page = None
+                else:
+                    self.logger.debug('%s loaded.' % url)
+                    return page, soup
+            except Exception as e:
+                page = None
+                self.logger.error('%s Unable to load. %s' % (url, e))
+            count += 1
+        return None, None
+
+    @ staticmethod
+    async def _make_query(session, url, check_token):
+        symbol = url.split('=')[-1]
+        await session.wait_for_element(15, 'input#symbol.symbol_input')
+        query_box = await session.get_element('input#symbol.symbol_input')
+        await query_box.send_keys(f'%s' % symbol)
+        button = await session.get_element('span.btn_go_text')
+        await button.click()
+        await session.wait_for_element(15, check_token)
+        return session
 
     async def forex_api_fetch(self, url):
         count = 0
@@ -121,9 +161,10 @@ class StockScrapper(object):
         hksymbols = [str(x) for x in symbols if str(x).isdigit()]
         ussymbols = [str(x) for x in symbols if not str(x).isdigit() and '/' not in str(x)]
         forex_symbols = [str(x) for x in symbols if not str(x).isdigit() and '/' in str(x)]
-        quotes = [await self.hk_stock_scrapper(x) for x in hksymbols] + [
-                  await self.us_stock_scrapper(x) for x in ussymbols] + \
-            ([await self.forex_api(forex_symbols)] if len(forex_symbols) > 0 else [])
+        tasks = [asyncio.ensure_future(self.hk_stock_scrapper(x)) for x in hksymbols] + [
+                  asyncio.ensure_future(self.us_stock_scrapper(x)) for x in ussymbols] + \
+            ([asyncio.ensure_future(self.forex_api(forex_symbols))] if len(forex_symbols) > 0 else [])
+        quotes = await asyncio.gather(*tasks)
         quotes = [[x] if not isinstance(x, list) else x for x in quotes]
         quotes = [y for x in quotes for y in x]
         return quotes
@@ -136,9 +177,9 @@ class StockScrapper(object):
 
 def main():
     stock = StockScrapper()
-    quotes = stock.loop.run_until_complete(stock.report_quote([3, 10, 700, 2318, 'AAPL', 'AMZN', 'NVDA', 'EUR/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD',
-                                 'BTC/ETH']))
-    # quotes = stock.report_quote([3, 10, 700, 2318, 'AAPL', 'AMZN', 'NVDA'])
+    # quotes = stock.loop.run_until_complete(stock.report_quote([3, 10, 700, 2318, 'AAPL', 'AMZN', 'NVDA', 'EUR/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD',
+    #                              'BTC/ETH']))
+    quotes = stock.loop.run_until_complete(stock.report_quote([3, 10, 700, 2318]))
     print(quotes)
 
 
